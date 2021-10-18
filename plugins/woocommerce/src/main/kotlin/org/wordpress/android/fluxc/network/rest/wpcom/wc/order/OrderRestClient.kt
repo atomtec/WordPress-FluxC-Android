@@ -386,44 +386,53 @@ class OrderRestClient @Inject constructor(
 
     /**
      * Makes a PUT call to `/wc/v3/orders/<id>` via the Jetpack tunnel (see [JetpackTunnelGsonRequest]),
-     * updating the status for the given [order] to [status].
-     *
-     * Dispatches a [WCOrderAction.UPDATED_ORDER_STATUS] with the updated [WCOrderModel].
-     *
-     * Possible non-generic errors:
-     * [OrderErrorType.INVALID_PARAM] if the [status] is not a valid order status on the server
-     * [OrderErrorType.INVALID_ID] if an order by this id was not found on the server
+     * updating the order.
      */
-    fun updateOrderStatus(
+    private suspend fun updateOrder(
         orderToUpdate: WCOrderModel,
         site: SiteModel,
-        status: String
-    ) {
+        updatePayload: Map<String, String>
+    ): RemoteOrderPayload {
         val url = WOOCOMMERCE.orders.id(orderToUpdate.remoteOrderId).pathV3
-        val params = mapOf("status" to status)
 
-        val request = JetpackTunnelGsonRequest.buildPutRequest(url, site.siteId, params, OrderApiResponse::class.java,
-                listener = { response: OrderApiResponse? ->
-                    response?.let {
-                        val newModel = orderResponseToOrderModel(it).apply {
-                            id = orderToUpdate.id
-                            localSiteId = orderToUpdate.localSiteId
-                        }
-                        val payload = RemoteOrderPayload(newModel, site)
-                        dispatcher.dispatch(WCOrderActionBuilder.newUpdatedOrderStatusAction(payload))
+        val response = jetpackTunnelGsonRequestBuilder.syncPutRequest(
+            restClient = this,
+            site = site,
+            url = url,
+            body = updatePayload.plus("_fields" to ORDER_FIELDS),
+            clazz = OrderApiResponse::class.java
+        )
+
+        return when (response) {
+            is JetpackSuccess -> {
+                response.data?.let {
+                    val newModel = orderResponseToOrderModel(it).apply {
+                        id = orderToUpdate.id
+                        localSiteId = orderToUpdate.localSiteId
                     }
-                },
-                errorListener = { networkError ->
-                    val orderError = networkErrorToOrderError(networkError)
-                    val payload = RemoteOrderPayload(
-                            orderError,
-                            orderToUpdate,
-                            site
-                    )
-                    dispatcher.dispatch(WCOrderActionBuilder.newUpdatedOrderStatusAction(payload))
-                })
-        add(request)
+                    RemoteOrderPayload(newModel, site)
+                } ?: RemoteOrderPayload(
+                    OrderError(type = GENERIC_ERROR, message = "Success response with empty data"),
+                    orderToUpdate,
+                    site
+                )
+            }
+            is JetpackError -> {
+                val orderError = networkErrorToOrderError(response.error)
+                RemoteOrderPayload(
+                    orderError,
+                    orderToUpdate,
+                    site
+                )
+            }
+        }
     }
+
+    suspend fun updateOrderStatus(orderToUpdate: WCOrderModel, site: SiteModel, status: String) =
+            updateOrder(orderToUpdate, site, mapOf("status" to status))
+
+    suspend fun updateCustomerOrderNote(orderToUpdate: WCOrderModel, site: SiteModel, newNotes: String) =
+            updateOrder(orderToUpdate, site, mapOf("customer_note" to newNotes))
 
     /**
      * Makes a GET call to `/wc/v3/orders/<id>/notes` via the Jetpack tunnel (see [JetpackTunnelGsonRequest]),
@@ -462,15 +471,13 @@ class OrderRestClient @Inject constructor(
     /**
      * Makes a POST call to `/wc/v3/orders/<id>/notes` via the Jetpack tunnel (see [JetpackTunnelGsonRequest]),
      * saving the provide4d note for the given WooCommerce [SiteModel] and [WCOrderModel].
-     *
-     * Dispatches a [WCOrderAction.POSTED_ORDER_NOTE] action with the resulting saved version of the order note.
      */
-    fun postOrderNote(
+    suspend fun postOrderNote(
         localOrderId: Int,
         remoteOrderId: Long,
         site: SiteModel,
         note: WCOrderNoteModel
-    ) {
+    ): RemoteOrderNotePayload {
         val url = WOOCOMMERCE.orders.id(remoteOrderId).notes.pathV3
 
         val params = mutableMapOf(
@@ -478,24 +485,35 @@ class OrderRestClient @Inject constructor(
                 "customer_note" to note.isCustomerNote,
                 "added_by_user" to true
         )
-        val request = JetpackTunnelGsonRequest.buildPostRequest(
-                url, site.siteId, params, OrderNoteApiResponse::class.java,
-                { response: OrderNoteApiResponse? ->
-                    response?.let {
-                        val newNote = orderNoteResponseToOrderNoteModel(it).apply {
-                            localSiteId = site.id
-                            this.localOrderId = localOrderId
-                        }
-                        val payload = RemoteOrderNotePayload(localOrderId, remoteOrderId, site, note)
-                        dispatcher.dispatch(WCOrderActionBuilder.newPostedOrderNoteAction(payload))
+
+        val response = jetpackTunnelGsonRequestBuilder.syncPostRequest(
+                this,
+                site,
+                url,
+                params,
+                OrderNoteApiResponse::class.java
+        )
+        return when (response) {
+            is JetpackSuccess -> {
+                response.data?.let {
+                    val newNote = orderNoteResponseToOrderNoteModel(it).apply {
+                        localSiteId = site.id
+                        this.localOrderId = localOrderId
                     }
-                },
-                WPComErrorListener { networkError ->
-                    val noteError = networkErrorToOrderError(networkError)
-                    val payload = RemoteOrderNotePayload(noteError, localOrderId, remoteOrderId, site, note)
-                    dispatcher.dispatch(WCOrderActionBuilder.newPostedOrderNoteAction(payload))
-                })
-        add(request)
+                    return RemoteOrderNotePayload(localOrderId, remoteOrderId, site, newNote)
+                } ?: RemoteOrderNotePayload(
+                        OrderError(type = GENERIC_ERROR, message = "Success response with empty data"),
+                        localOrderId,
+                        remoteOrderId,
+                        site,
+                        note
+                )
+            }
+            is JetpackError -> {
+                val noteError = networkErrorToOrderError(response.error)
+                return RemoteOrderNotePayload(noteError, localOrderId, remoteOrderId, site, note)
+            }
+        }
     }
 
     /**
@@ -547,19 +565,15 @@ class OrderRestClient @Inject constructor(
      * why there is an if-statement. Either way, the same standard [WCOrderShipmentTrackingModel] is returned.
      *
      * Note: This API does not currently support v3.
-     *
-     * Dispatches [WCOrderAction.ADDED_ORDER_SHIPMENT_TRACKING] action with the results.
      */
-    fun addOrderShipmentTrackingForOrder(
+    suspend fun addOrderShipmentTrackingForOrder(
         site: SiteModel,
         localOrderId: Int,
         remoteOrderId: Long,
         tracking: WCOrderShipmentTrackingModel,
         isCustomProvider: Boolean
-    ) {
+    ): AddOrderShipmentTrackingResponsePayload {
         val url = WOOCOMMERCE.orders.id(remoteOrderId).shipment_trackings.pathV2
-
-        val responseType = object : TypeToken<OrderShipmentTrackingApiResponse>() {}.type
         val params = if (isCustomProvider) {
             mutableMapOf(
                     "custom_tracking_provider" to tracking.trackingProvider,
@@ -569,27 +583,36 @@ class OrderRestClient @Inject constructor(
         }
         params.put("tracking_number", tracking.trackingNumber)
         params.put("date_shipped", tracking.dateShipped)
-        val request = JetpackTunnelGsonRequest.buildPostRequest(url, site.siteId, params, responseType,
-                { response: OrderShipmentTrackingApiResponse? ->
-                    val trackingResponse = response?.let {
-                        orderShipmentTrackingResponseToModel(it).apply {
-                            this.localOrderId = localOrderId
-                            localSiteId = site.id
-                        }
+
+        val response = jetpackTunnelGsonRequestBuilder.syncPostRequest(
+                this,
+                site,
+                url,
+                params,
+                OrderShipmentTrackingApiResponse::class.java
+        )
+
+        return when (response) {
+            is JetpackSuccess -> {
+                response.data?.let {
+                    val trackingModel = orderShipmentTrackingResponseToModel(it).apply {
+                        this.localOrderId = localOrderId
+                        localSiteId = site.id
                     }
-                    val payload = AddOrderShipmentTrackingResponsePayload(
-                            site, localOrderId, remoteOrderId, trackingResponse
-                    )
-                    dispatcher.dispatch(WCOrderActionBuilder.newAddedOrderShipmentTrackingAction(payload))
-                },
-                WPComErrorListener { networkError ->
-                    val trackingsError = networkErrorToOrderError(networkError)
-                    val payload = AddOrderShipmentTrackingResponsePayload(
-                            trackingsError, site, localOrderId, remoteOrderId, tracking
-                    )
-                    dispatcher.dispatch(WCOrderActionBuilder.newAddedOrderShipmentTrackingAction(payload))
-                })
-        add(request)
+                    AddOrderShipmentTrackingResponsePayload(site, localOrderId, remoteOrderId, trackingModel)
+                } ?: AddOrderShipmentTrackingResponsePayload(
+                        OrderError(type = GENERIC_ERROR, message = "Success response with empty data"),
+                        site,
+                        localOrderId,
+                        remoteOrderId,
+                        tracking
+                )
+            }
+            is JetpackError -> {
+                val trackingsError = networkErrorToOrderError(response.error)
+                AddOrderShipmentTrackingResponsePayload(trackingsError, site, localOrderId, remoteOrderId, tracking)
+            }
+        }
     }
 
     /**
@@ -599,43 +622,53 @@ class OrderRestClient @Inject constructor(
      * via the Jetpack tunnel (see [JetpackTunnelGsonRequest].
      *
      * Note this is currently not supported in v3, but will be in the future.
-     *
-     * Dispatches a [WCOrderAction.DELETED_ORDER_SHIPMENT_TRACKING] action with the results
      */
-    fun deleteShipmentTrackingForOrder(
+    suspend fun deleteShipmentTrackingForOrder(
         site: SiteModel,
         localOrderId: Int,
         remoteOrderId: Long,
         tracking: WCOrderShipmentTrackingModel
-    ) {
+    ): DeleteOrderShipmentTrackingResponsePayload {
         val url = WOOCOMMERCE.orders.id(remoteOrderId)
                 .shipment_trackings.tracking(tracking.remoteTrackingId).pathV2
-
-        val responseType = object : TypeToken<OrderShipmentTrackingApiResponse>() {}.type
-        val params = emptyMap<String, String>()
-        val request = JetpackTunnelGsonRequest.buildDeleteRequest(url, site.siteId, params, responseType,
-                { response: OrderShipmentTrackingApiResponse? ->
-                    val trackingResponse = response?.let {
-                        orderShipmentTrackingResponseToModel(it).apply {
-                            localSiteId = site.id
-                            this.localOrderId = localOrderId
-                            id = tracking.id
-                        }
+        val response = jetpackTunnelGsonRequestBuilder.syncDeleteRequest(
+                this,
+                site,
+                url,
+                OrderShipmentTrackingApiResponse::class.java
+        )
+        return when (response) {
+            is JetpackSuccess -> {
+                response.data?.let {
+                    val model = orderShipmentTrackingResponseToModel(it).apply {
+                        localSiteId = site.id
+                        this.localOrderId = localOrderId
+                        id = tracking.id
                     }
-
-                    val payload = DeleteOrderShipmentTrackingResponsePayload(
-                            site, localOrderId, remoteOrderId, trackingResponse
+                    DeleteOrderShipmentTrackingResponsePayload(
+                            site,
+                            localOrderId,
+                            remoteOrderId,
+                            model
                     )
-                    dispatcher.dispatch(WCOrderActionBuilder.newDeletedOrderShipmentTrackingAction(payload))
-                },
-                WPComErrorListener { networkError ->
-                    val trackingsError = networkErrorToOrderError(networkError)
-                    val payload = DeleteOrderShipmentTrackingResponsePayload(
-                            trackingsError, site, localOrderId, remoteOrderId, tracking
-                    )
-                    dispatcher.dispatch(WCOrderActionBuilder.newDeletedOrderShipmentTrackingAction(payload))
-                })
-        add(request)
+                } ?: DeleteOrderShipmentTrackingResponsePayload(
+                        OrderError(type = GENERIC_ERROR, message = "Success response with empty data"),
+                        site,
+                        localOrderId,
+                        remoteOrderId,
+                        tracking
+                )
+            }
+            is JetpackError -> {
+                DeleteOrderShipmentTrackingResponsePayload(
+                        networkErrorToOrderError(response.error),
+                        site,
+                        localOrderId,
+                        remoteOrderId,
+                        tracking
+                )
+            }
+        }
     }
 
     /**
