@@ -131,5 +131,19 @@
             android:layout_height="wrap_content"
             android:enabled="false"
             android:text="Update Latest Order Customer Notes" />
+
+        <Button
+            android:id="@+id/update_latest_order_billing_address"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Update latest order billing address" />
+
+        <Button
+            android:id="@+id/create_quick_order"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Create quick order" />
     </LinearLayout>
 </ScrollView>
