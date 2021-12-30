@@ -5,6 +5,9 @@
 /orders/<id>/shipment-trackings/<tracking>#String/
 /orders/<id>/shipment-trackings/providers/
 
+/coupons/
+/coupons/<id>/
+
 /products/<id>/
 /products/<id>/variations/
 /products/<id>/variations/<variation_id>
