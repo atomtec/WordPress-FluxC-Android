@@ -17,7 +17,7 @@ data class RemoteCouponDto(
     @SerializedName("date_modified_gmt")
     val dateModifiedGmt: String?,
     @SerializedName("discount_type")
-    val discountType: CouponType,
+    val discountType: RemoteCouponType,
     val description: String?,
     @SerializedName("date_expires")
     val dateExpires: String?,
@@ -55,4 +55,13 @@ data class RemoteCouponDto(
     val usedBy:  List<Long>? = null,
     @SerializedName("meta_data")
     val metaData: List<WCMetaData>? = null
-)
+) {
+    enum class RemoteCouponType {
+        @SerializedName("percent")
+        Percent,
+        @SerializedName("fixed_cart")
+        FixedCart,
+        @SerializedName("fixed_product")
+        FixedProduct
+    }
+}

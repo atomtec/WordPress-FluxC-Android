@@ -7,25 +7,29 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import org.wordpress.android.fluxc.persistence.converters.LongListConverter
 import org.wordpress.android.fluxc.persistence.dao.AddonsDao
+import org.wordpress.android.fluxc.persistence.dao.CouponDao
 import org.wordpress.android.fluxc.persistence.dao.SSRDao
 import org.wordpress.android.fluxc.persistence.entity.AddonEntity
 import org.wordpress.android.fluxc.persistence.entity.AddonOptionEntity
+import org.wordpress.android.fluxc.persistence.entity.CouponEntity
 import org.wordpress.android.fluxc.persistence.entity.GlobalAddonGroupEntity
 import org.wordpress.android.fluxc.persistence.entity.SSREntity
 
 @Database(
-        version = 3,
+        version = 4,
         entities = [
             AddonEntity::class,
             AddonOptionEntity::class,
             GlobalAddonGroupEntity::class,
-            SSREntity::class
+            SSREntity::class,
+            CouponEntity::class
         ]
 )
 @TypeConverters(value = [LongListConverter::class])
 abstract class WCAndroidDatabase : RoomDatabase() {
     internal abstract fun addonsDao(): AddonsDao
     abstract fun ssrDao(): SSRDao
+    abstract fun couponDao(): CouponDao
 
     companion object {
         fun buildDb(applicationContext: Context) = Room.databaseBuilder(

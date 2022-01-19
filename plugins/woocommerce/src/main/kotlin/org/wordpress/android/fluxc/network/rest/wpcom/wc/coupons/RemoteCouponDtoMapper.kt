@@ -1,7 +1,9 @@
 package org.wordpress.android.fluxc.network.rest.wpcom.wc.coupons
 
 import org.wordpress.android.fluxc.model.coupons.RemoteCouponDto
+import org.wordpress.android.fluxc.model.coupons.RemoteCouponDto.RemoteCouponType
 import org.wordpress.android.fluxc.persistence.entity.CouponEntity
+import org.wordpress.android.fluxc.persistence.entity.CouponEntity.CouponType
 import java.math.BigDecimal
 
 object RemoteCouponDtoMapper {
@@ -15,7 +17,7 @@ object RemoteCouponDtoMapper {
                 dateCreatedGmt = dto.dateCreatedGmt,
                 dateModified = dto.dateModified,
                 dateModifiedGmt = dto.dateModifiedGmt,
-                discountType = dto.discountType,
+                discountType = mapToLocalCouponType(dto.discountType),
                 description = dto.description,
                 dateExpires = dto.dateExpires,
                 dateExpiresGmt = dto.dateExpiresGmt,
@@ -36,5 +38,13 @@ object RemoteCouponDtoMapper {
                 usedBy = dto.usedBy,
                 metaData = dto.metaData
         )
+    }
+
+    fun mapToLocalCouponType(remoteCouponType: RemoteCouponType): CouponType {
+        return when(remoteCouponType) {
+            RemoteCouponType.Percent -> CouponType.Percent
+            RemoteCouponType.FixedCart -> CouponType.FixedCart
+            RemoteCouponType.FixedProduct -> CouponType.FixedProduct
+        }
     }
 }
